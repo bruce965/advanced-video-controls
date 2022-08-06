@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Video Controls
 // @namespace    https://www.fabioiotti.com/
-// @version      0.2
+// @version      0.3
 // @description  Play/pause, change speed, step, full-screen. Everywhere, not just on YouTube.
 // @author       Fabio Iotti
 // @match        http*://*/*
@@ -15,6 +15,7 @@
 	const CONTROLS_REGISTERED_SYMBOL = Symbol("ControlsRegistered");
 	const EXPECTED_FRAME_DURATION = Symbol("ExpectedFrameDuration");
 	const NEXT_FRAME_REQUEST_IN_PROGRESS = Symbol("NextFrameRequestInProgress");
+	const CURRENT_TIME_PENDING = Symbol("CurrentTimePending");
 
 	let lastCommandDate = 0;
 	let cumulativeSeek = 0;
@@ -30,7 +31,7 @@
 			if (el.matches('input, textarea, [contenteditable]'))
 					return;
 
-			const video = findTargetVideo();
+			const video = findNetflixTargetVideo() ?? findTargetVideo();
 
 			if (video == null)
 					return;
@@ -53,12 +54,13 @@
 					if (Date.now() - lastCommandDate > 1500)
 							cumulativeSeek = 0;
 
-					cumulativeSeek -= 10;
+					const previousTime = video.currentTime;
+					video.currentTime = Math.max(0, previousTime - 10);
+
+					cumulativeSeek += (video.currentTime - previousTime);
 					lastCommandDate = Date.now();
 
-					const newTime = Math.max(0, video.currentTime)
-					pulseMessage(video, `${cumulativeSeek > 0 ? "+" : ""}${cumulativeSeek} sec`);
-					video.currentTime = newTime - 10;
+					pulseMessage(video, `${cumulativeSeek > 0 ? "+" : ""}${cumulativeSeek.toFixed(0)} sec`);
 			}
 
 			// fast-forward
@@ -69,12 +71,13 @@
 					if (Date.now() - lastCommandDate > 1500)
 							cumulativeSeek = 0;
 
-					cumulativeSeek += 10;
+					const previousTime = video.currentTime;
+					video.currentTime = Math.max(0, previousTime + 10);
+
+					cumulativeSeek += (video.currentTime - previousTime);
 					lastCommandDate = Date.now();
 
-					const newTime = Math.min(video.duration, video.currentTime)
-					pulseMessage(video, `${cumulativeSeek > 0 ? "+" : ""}${cumulativeSeek} sec`);
-					video.currentTime = newTime + 10;
+					pulseMessage(video, `${cumulativeSeek > 0 ? "+" : ""}${cumulativeSeek.toFixed(0)} sec`);
 			}
 
 			// speed up
@@ -204,6 +207,51 @@
 	};
 
 	/**
+	 * Find the video element the user is currently interested in, on Netflix.
+	 */
+	const findNetflixTargetVideo = () => {
+		try {
+			if (typeof netflix === 'undefined')
+				return null;
+
+			const video = findTargetVideo();
+
+			const api = netflix.appContext.state.playerApp.getAPI();
+			const player = api.videoPlayer.getVideoPlayerBySessionId(api.videoPlayer.getAllPlayerSessionIds([0]));
+
+			// adapt video to support Netflix's DRM shenanigans
+			return new Proxy(video, {
+				get(video, prop, receiver) {
+					if (typeof video[prop] === 'function')
+						return (...args) => video[prop](...args);
+
+					if (prop === 'currentTime') {
+						if (video[CURRENT_TIME_PENDING]?.start === video.currentTime)
+							return video[CURRENT_TIME_PENDING].target;
+
+						return video.currentTime;
+					}
+
+					return video[prop];
+				},
+				set(video, prop, value) {
+					if (prop === 'currentTime') {
+						const seekTarget = value;  // TODO: Netflix only seeks to keyframes.
+						video[CURRENT_TIME_PENDING] = { start: video.currentTime, target: seekTarget };
+						player.seek(seekTarget * 1000);
+						return video.currentTime;
+					}
+
+					return video[prop] = value;
+				},
+			});
+		}
+		catch (e) {}
+
+		return null;
+	};
+
+	/**
 	 * Distance between a point and an element's position.
 	 * @param {{ x: number, y: number }} pos
 	 * @param {HTMLElement} el
@@ -235,10 +283,10 @@
 
 			const container = document.createElement('div');
 			container.style.position = 'absolute';
-			container.style.top = `${rect.top}px`;
-			container.style.left = `${rect.left}px`;
-			container.style.width = `${rect.width}px`;
-			container.style.height = `${rect.height}px`;
+			container.style.top = `max(0vh, ${rect.top}px)`;
+			container.style.left = `max(0vw, ${rect.left}px)`;
+			container.style.width = `min(100vw, ${rect.width}px)`;
+			container.style.height = `min(100vh, ${rect.height}px)`;
 			container.style.pointerEvents = 'none';
 			container.style.display = 'flex';
 			container.style.justifyContent = 'center';
