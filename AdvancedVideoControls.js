@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Video Controls
 // @namespace    https://www.fabioiotti.com/
-// @version      0.3
+// @version      0.4
 // @description  Play/pause, change speed, step, full-screen. Everywhere, not just on YouTube.
 // @author       Fabio Iotti
 // @match        http*://*/*
@@ -200,7 +200,7 @@
 			// find the video element closest to the active element
 			const video = videos
 					.map(video => ({ video, dist: dist(pos, video) }))
-					.sort((a, b) => a.dist - b.dist)
+					.sort((a, b) => (a.dist !== 0 || b.dist !== 0) ? (a.dist - b.dist) : -compareZIndex(a.video, b.video))
 					[0]?.video;
 
 			return video;
@@ -211,7 +211,7 @@
 	 */
 	const findNetflixTargetVideo = () => {
 		try {
-			if (typeof netflix === 'undefined')
+			if (typeof netflix === 'undefined' || location.host !== 'www.netflix.com')
 				return null;
 
 			const video = findTargetVideo();
@@ -262,6 +262,90 @@
 			const distY = pos.y < rect.top ? (rect.top - pos.y) : pos.y > rect.bottom ? (pos.y - rect.bottom) : 0;
 			const dist = Math.sqrt(distX*distX + distY*distY);
 			return dist;
+	};
+
+	/**
+	 * Compare z-index of two elements.
+	 * @param {HTMLElement} a
+	 * @param {HTMLElement} b
+	 * @returns {number}
+	 */
+	const compareZIndex = (a, b) => {
+		// same element? same z-index
+		if (a === b)
+			return 0;
+
+		// on different trees? cannot compare z-index
+		const parent = firstCommonAncestor(a, b);
+		if (parent == null)
+			return 0;
+
+		// `a` is parent of `b`? then `a` comes first (unless its z-index is negative)
+		if (parent === a) {
+			const zIndexA = getComputedStyle(a).zIndex;
+			return +zIndexA || 0; // `or 0` in case of NaN
+		}
+
+		// `b` is parent of `a`? then `b` comes first (unless its z-index is negative)
+		if (parent === b) {
+			const zIndexB = getComputedStyle(b).zIndex;
+			return -zIndexB || 0; // `or 0` in case of NaN
+		}
+
+		// find direct child of `parent` which is `a` or ancestor of `a`
+		let baseA = a;
+		while (baseA.parentElement !== parent)
+			baseA = baseA.parentElement;
+
+		// find direct child of `parent` which is `b` or ancestor of `b`
+		let baseB = b;
+		while (baseB.parentElement !== parent)
+			baseB = baseB.parentElement;
+
+		// try to compare z-index (same parent, so same stacking context guaranteed)
+		const zIndexA = +getComputedStyle(baseA).zIndex || 0; // `or 0` in case of NaN
+		const zIndexB = +getComputedStyle(baseB).zIndex || 0; // `or 0` in case of NaN
+		if (zIndexA !== zIndexB)
+			return zIndexA - zIndexB;
+
+		// find the child of `parent` which appears first
+		// TODO: this is not bullet-proof, children might have been reordered.
+		for (const child of parent.children) {
+			if (child === baseA)
+				return -1;
+			if (child === baseB)
+				return 1;
+		}
+
+		// something went wrong
+		return 0;
+	};
+
+	/**
+	 * Find the first common ancestor of two elements.
+	 * @param {HTMLElement} a
+	 * @param {HTMLElement} b
+	 * @returns {HTMLElement|null}
+	 */
+	const firstCommonAncestor = (a, b) => {
+		/** @type {Set<HTMLElement>} */
+		const parentsA = new Set();
+
+		let candidate = a;
+		while (candidate != null) {
+			parentsA.add(candidate);
+			candidate = candidate.parentElement;
+		}
+
+		candidate = b;
+		while (candidate != null) {
+			if (parentsA.has(candidate))
+				return candidate;
+			
+			candidate = candidate.parentElement;
+		}
+
+		return null;
 	};
 
 	/**
