@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Video Controls
 // @namespace    https://www.fabioiotti.com/
-// @version      0.4
+// @version      0.4.1
 // @description  Play/pause, change speed, step, full-screen. Everywhere, not just on YouTube.
 // @author       Fabio Iotti
 // @match        http*://*/*
@@ -163,21 +163,25 @@
 
 											// prevent YouTube from disabling video controls
 											video.controls = true;
-											video.style.cursor = 'initial !important';
+											video.style.setProperty('cursor', 'initial', 'important');
+											video.style.setProperty('pointer-events', 'all', 'important');
 											e.stopImmediatePropagation();
 											requestAnimationFrame(() => {
 													video.controls = true;
-													video.style.cursor = 'initial !important';
+													video.style.setProperty('cursor', 'initial', 'important');
+													video.style.setProperty('pointer-events', 'all', 'important');
 													requestAnimationFrame(() => {
 															video.controls = true;
-															video.style.cursor = 'initial !important';
+															video.style.setProperty('cursor', 'initial', 'important');
+															video.style.setProperty('pointer-events', 'all', 'important');
 													});
 											});
 									});
 							}
 
 							video.controls = true;
-							video.style.cursor = 'initial !important';
+							video.style.setProperty('cursor', 'initial', 'important');
+							video.style.setProperty('pointer-events', 'all', 'important');
 							video.requestFullscreen();
 					}
 			}
