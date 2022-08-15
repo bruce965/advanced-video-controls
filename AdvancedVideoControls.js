@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Video Controls
 // @namespace    https://www.fabioiotti.com/
-// @version      0.4.2
+// @version      0.5.0
 // @description  Play/pause, change speed, step, full-screen. Everywhere, not just on YouTube.
 // @author       Fabio Iotti
 // @match        http*://*/*
@@ -16,10 +16,15 @@
 	const EXPECTED_FRAME_DURATION = Symbol("ExpectedFrameDuration");
 	const NEXT_FRAME_REQUEST_IN_PROGRESS = Symbol("NextFrameRequestInProgress");
 	const CURRENT_TIME_PENDING = Symbol("CurrentTimePending");
+	const IS_THEATER_MODE = Symbol("IsTheaterMode");
+	const IS_FULLSCREEN_MODE = Symbol("IsFullscreenMode");
 
 	let lastCommandDate = 0;
 	let cumulativeSeek = 0;
 	let cumulativeFrames = 0;
+
+	/** @type {(() => void)|undefined} */
+	let restoreOriginalState;
 
 	window.addEventListener('contextmenu', e => {
 			if (e.target.matches('audio, video'))
@@ -148,42 +153,90 @@
 					});
 			}
 
-			// fullscreen
+			// fullscreen (native controls only)
 			else if (!e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === 'F11') {
 					e.stopImmediatePropagation();
 					e.preventDefault();
 
 					if (document.fullscreenElement == null) {
-							if (!video[CONTROLS_REGISTERED_SYMBOL]) {
-									video[CONTROLS_REGISTERED_SYMBOL] = true;
-
-									video.addEventListener('mousemove', e => {
-											if (document.fullscreenElement !== video)
-													return;
-
-											// prevent YouTube from disabling video controls
-											video.controls = true;
-											video.style.setProperty('cursor', 'initial', 'important');
-											video.style.setProperty('pointer-events', 'all', 'important');
-											e.stopImmediatePropagation();
-											requestAnimationFrame(() => {
-													video.controls = true;
-													video.style.setProperty('cursor', 'initial', 'important');
-													video.style.setProperty('pointer-events', 'all', 'important');
-													requestAnimationFrame(() => {
-															video.controls = true;
-															video.style.setProperty('cursor', 'initial', 'important');
-															video.style.setProperty('pointer-events', 'all', 'important');
-													});
-											});
-									});
-							}
-
-							video.controls = true;
-							video.style.setProperty('cursor', 'initial', 'important');
-							video.style.setProperty('pointer-events', 'all', 'important');
+							enableVideoControls();
 							video.requestFullscreen();
 					}
+			}
+
+			// fullscreen (including page)
+			else if (!e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === 'f') {
+				e.stopImmediatePropagation();
+				e.preventDefault();
+
+				enableVideoControls(video);
+
+				if (video[IS_FULLSCREEN_MODE]) {
+					restoreOriginalState();
+					restoreOriginalState = undefined
+				}
+				else {
+					const restore = elevateElement(video);
+					document.documentElement.requestFullscreen();
+					video[IS_FULLSCREEN_MODE] = true;
+
+					restoreOriginalState?.();
+					restoreOriginalState = () => {
+						video[IS_FULLSCREEN_MODE] = false;
+						if (document.fullscreenElement != null)
+							document.exitFullscreen();
+						restore();
+					};
+				}
+
+				/** @param {Event} e */
+				const exitFullscreenListener = (e) => {
+					if (document.fullscreenElement != null)
+						return;
+
+					if (video[IS_FULLSCREEN_MODE]) {
+						restoreOriginalState();
+						restoreOriginalState = undefined
+					}
+
+					document.removeEventListener('fullscreenchange', exitFullscreenListener);
+				};
+
+				document.addEventListener('fullscreenchange', exitFullscreenListener);
+			}
+
+			// theater mode
+			else if (!e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === 't') {
+				e.stopImmediatePropagation();
+				e.preventDefault();
+
+				enableVideoControls(video);
+
+				if (video[IS_THEATER_MODE]) {
+					restoreOriginalState();
+					restoreOriginalState = undefined
+				}
+				else {
+					const restore = elevateElement(video);
+					video[IS_THEATER_MODE] = true;
+
+					restoreOriginalState?.();
+					restoreOriginalState = () => {
+						video[IS_THEATER_MODE] = false;
+						restore();
+					};
+				}
+			}
+
+			// restore original state (from theater mode)
+			else if (!e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === 'Escape') {
+				if (restoreOriginalState != null) {
+					e.stopImmediatePropagation();
+					e.preventDefault();
+
+					restoreOriginalState();
+					restoreOriginalState = undefined;
+				}
 			}
 	}, true);
 
@@ -414,6 +467,104 @@
 
 			cancelPreviousMessage();
 			cancelPreviousMessage = cancelMessage;
+	};
+
+	/**
+	 * Elevate target element above everything else and fill the screen.
+	 * @param {HTMLElement} el
+	 * @return {() => void} Dispose function to be invoked to return to original state.
+	 */
+	const elevateElement = (el) => {
+		/** @typedef {{ el: HTMLElement, style: { [prop: string]: [v: string | null, p: string | undefined] } }} State */
+
+		/**
+		 * Override style property and store previous state.
+		 * @param {State} state
+		 * @param {string} prop
+		 * @param {string | null} value
+		 * @param {string | undefined} priority
+		 */
+		const overrideStyle = (state, prop, value, priority) => {
+			const oldValue = state.el.style.getPropertyValue(prop);
+			const oldPriority = state.el.style.getPropertyPriority(prop);
+			state.style[prop] ??= [oldValue, oldPriority];
+			state.el.style.setProperty(prop, value, priority);
+		};
+
+		/**
+		 * Restore style previous state.
+		 * @param {State} state
+		 */
+		const restoreStyle = (state) => {
+			for (const prop in state.style) {
+				const [oldValue, oldPriority] = state.style[prop];
+				state.el.style.setProperty(prop, oldValue, oldPriority);
+			}
+		};
+
+		/** @type {State[]} */
+		const states = [];
+
+		let x = el;
+		while (x != null) {
+			/** @type {State} */
+			const state = { el: x, style: {} };
+			overrideStyle(state, 'position', 'fixed', 'important');
+			overrideStyle(state, 'z-index', '9999998', 'important');
+
+			if (x === el) {
+				overrideStyle(state, 'top', '0', 'important');
+				overrideStyle(state, 'left', '0', 'important');
+				overrideStyle(state, 'width', '100vw', 'important');
+				overrideStyle(state, 'height', '100vh', 'important');
+				overrideStyle(state, 'background', 'black', 'important');
+			}
+
+			states.push(state);
+			x = x.parentElement;
+		}
+
+		return () => {
+			for (const state of states) {
+				restoreStyle(state);
+			}
+		};
+	};
+
+	/**
+	 * Permanently enable native video playback controls.
+	 * @param {HTMLVideoElement} video
+	 */
+	const enableVideoControls = (video) => {
+		if (!video[CONTROLS_REGISTERED_SYMBOL]) {
+			video[CONTROLS_REGISTERED_SYMBOL] = true;
+
+			video.addEventListener('mousemove', e => {
+				// prevent YouTube from disabling video controls
+				video.removeAttribute("controlslist");
+				video.controls = true;
+				video.style.setProperty('cursor', 'initial', 'important');
+				video.style.setProperty('pointer-events', 'all', 'important');
+				e.stopImmediatePropagation();
+				requestAnimationFrame(() => {
+					video.removeAttribute("controlslist");
+					video.controls = true;
+					video.style.setProperty('cursor', 'initial', 'important');
+					video.style.setProperty('pointer-events', 'all', 'important');
+					requestAnimationFrame(() => {
+						video.removeAttribute("controlslist");
+						video.controls = true;
+						video.style.setProperty('cursor', 'initial', 'important');
+						video.style.setProperty('pointer-events', 'all', 'important');
+					});
+				});
+			});
+		}
+
+		video.removeAttribute("controlslist");
+		video.controls = true;
+		video.style.setProperty('cursor', 'initial', 'important');
+		video.style.setProperty('pointer-events', 'all', 'important');
 	};
 
 	/** @type {HTMLCanvasElement | null} */
