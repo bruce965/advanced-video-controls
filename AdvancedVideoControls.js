@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Video Controls
 // @namespace    https://www.fabioiotti.com/
-// @version      0.5.0
+// @version      0.5.1
 // @description  Play/pause, change speed, step, full-screen. Everywhere, not just on YouTube.
 // @author       Fabio Iotti
 // @match        http*://*/*
@@ -511,6 +511,7 @@
 			const state = { el: x, style: {} };
 			overrideStyle(state, 'position', 'fixed', 'important');
 			overrideStyle(state, 'z-index', '9999998', 'important');
+			overrideStyle(state, 'transform', 'unset', 'important');  // fix Netflix
 
 			if (x === el) {
 				overrideStyle(state, 'top', '0', 'important');
