@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Video Controls
 // @namespace    https://www.fabioiotti.com/
-// @version      0.4.1
+// @version      0.4.2
 // @description  Play/pause, change speed, step, full-screen. Everywhere, not just on YouTube.
 // @author       Fabio Iotti
 // @match        http*://*/*
@@ -384,6 +384,7 @@
 			const content = document.createElement('div');
 			content.style.background = '#000000aa';
 			content.style.color = 'white';
+			content.style.fontFamily = 'sans-serif';
 			content.style.fontSize = '24px';
 			content.style.padding = '.6em 1em';
 			content.style.borderRadius = '99em';
